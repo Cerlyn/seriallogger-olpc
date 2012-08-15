@@ -76,6 +76,10 @@ def log_until_next_boot(sourcedata, serialnum='Unknown',
     except KeyboardInterrupt:
         _close_logfile(logfile, serialnum, "Keyboard interrupt detected")
         return False
+    except serial.serialutil.SerialException:
+        _close_logfile(logfile, serialnum,
+                       "SerialException: Serial adapter likely unplugged")
+        return False
 
     # EOF reached or timeout occurred
     _close_logfile(logfile, serialnum, "EOF/timeout")
@@ -90,7 +94,7 @@ def get_sn_banner(sourcedata):
     sourcedata (which should already be open)
 
     Returns the touple (None, None) if the OFW banner is not seen prior to
-    a EOF/Timeout condition or if a KeyboardInterrupt occurs.
+    a EOF/Timeout condition or if a Keyboard or Serial exception occurs.
 
     Returns a touple with the (1) serial number or 'Unknown' and
     (2) the OFW banner lines seen up to that point if successful
@@ -114,7 +118,7 @@ def get_sn_banner(sourcedata):
             failsafe += 1
             if failsafe > OFW_BANNER_MAX_LENGTH:
                 raise Exception('OFW banner > 50 lines; unexpected')
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, serial.serialutil.SerialException):
         pass
     return(None, None)
 
