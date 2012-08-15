@@ -30,6 +30,15 @@ OFW_BANNER_MAX_LENGTH = 50
 SERIAL_DEFAULT_TIMEOUT = 1800  # 30 Minutes
 
 
+def _close_logfile(logfile, serialnum, reason):
+    """
+    Writes a closing banner to a logfile and close said file.
+    """
+    logfile.write("--- Logfile closed for '{0}' at {1} GMT ({2}) ---\n".format(
+                  serialnum, time.asctime(time.gmtime()), reason))
+    logfile.close()
+
+
 def log_until_next_boot(sourcedata, serialnum='Unknown',
                         initiallines=None):
     """
@@ -53,24 +62,23 @@ def log_until_next_boot(sourcedata, serialnum='Unknown',
         logfile.writelines(initiallines)
         datalinecount += len(initiallines)
 
-    for line in sourcedata:
-        if line.find("Forthmacs") >= 0 or line.find("CForth built") >= 0:
-            logfile.write(line)
-            logfile.write("--- Logfile closed for '" + serialnum + "' at "
-                          + time.asctime(time.gmtime())
-                          + " GMT (Reboot detected) ---\n")
-            logfile.close()
-            if datalinecount <= LOG_LENGTH_UNKEEPABLE:
-                os.unlink(destfile)
-            return True
+    try:
+        for line in sourcedata:
+            if line.find("Forthmacs") >= 0 or line.find("CForth built") >= 0:
+                logfile.write(line)
+                _close_logfile(logfile, serialnum, "Reboot detected")
+                if datalinecount <= LOG_LENGTH_UNKEEPABLE:
+                    os.unlink(destfile)
+                return True
 
-        logfile.write(line)
-        datalinecount += 1
+            logfile.write(line)
+            datalinecount += 1
+    except KeyboardInterrupt:
+        _close_logfile(logfile, serialnum, "Keyboard interrupt detected")
+        return False
 
     # EOF reached or timeout occurred
-    logfile.write("--- Logfile closed for '" + serialnum + "' at "
-                  + time.asctime(time.gmtime()) + " GMT (EOF/timeout) ---\n")
-    logfile.close()
+    _close_logfile(logfile, serialnum, "EOF/timeout")
     if datalinecount <= LOG_LENGTH_UNKEEPABLE:
         os.unlink(destfile)
     return False
@@ -82,7 +90,7 @@ def get_sn_banner(sourcedata):
     sourcedata (which should already be open)
 
     Returns the touple (None, None) if the OFW banner is not seen prior to
-    a EOF/Timeout condition.
+    a EOF/Timeout condition or if a KeyboardInterrupt occurs.
 
     Returns a touple with the (1) serial number or 'Unknown' and
     (2) the OFW banner lines seen up to that point if successful
@@ -90,20 +98,25 @@ def get_sn_banner(sourcedata):
     Raises an exception if too many lines are seen for the data processed to be
     an OFW banner.
     """
-    failsafe = 0
-    for line in sourcedata:
-        bannerlines = []
 
-        bannerlines.append(line)
+    try:
+        failsafe = 0
+        for line in sourcedata:
+            bannerlines = []
 
-        serialmatch = re.search('S/N ([SC][HS][CN]\w{8}|Unknown)', line)
-        if serialmatch:
-            serialnum = serialmatch.group(1)
-            return(serialnum, bannerlines)
+            bannerlines.append(line)
 
-        failsafe += 1
-        if failsafe > OFW_BANNER_MAX_LENGTH:
-            raise Exception('OFW banner > 50 lines; unexpected')
+            serialmatch = re.search('S/N ([SC][HS][CN]\w{8}|Unknown)', line)
+            if serialmatch:
+                serialnum = serialmatch.group(1)
+                return(serialnum, bannerlines)
+
+            failsafe += 1
+            if failsafe > OFW_BANNER_MAX_LENGTH:
+                raise Exception('OFW banner > 50 lines; unexpected')
+    except KeyboardInterrupt:
+        pass
+    return(None, None)
 
 
 def main():
@@ -123,6 +136,8 @@ def main():
     need_another_run = log_until_next_boot(datasource)
     while need_another_run:
         (serialnum, logdata) = get_sn_banner(datasource)
+        if (serialnum == None) and (logdata == None):  # Timeout or interrupted
+            break
         need_another_run = log_until_next_boot(datasource, serialnum, logdata)
         # time.sleep(2)  # For file Testing
 
